@@ -12,6 +12,7 @@
             "Dtyq\\AsyncEvent\\": "src/"
         }
     },
+    
     "autoload-dev": {
         "psr-4": {
             "HyperfTest\\": "tests"
