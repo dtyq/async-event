@@ -8,14 +8,14 @@ declare(strict_types=1);
 namespace Dtyq\AsyncEvent;
 
 use Dtyq\AsyncEvent\Kernel\Annotation\AsyncListener;
+use Dtyq\AsyncEvent\Kernel\Driver\ListenerAsyncDriverFactory;
+use Dtyq\AsyncEvent\Kernel\Driver\ListenerAsyncDriverInterface;
 use Dtyq\AsyncEvent\Kernel\Service\AsyncEventService;
-use Dtyq\AsyncEvent\Kernel\Utils\Locker;
+use Dtyq\AsyncEvent\Kernel\Utils\LogUtil;
 use Hyperf\Di\Annotation\AnnotationCollector;
-use Hyperf\Engine\Coroutine;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\EventDispatcher\ListenerProviderInterface;
 use Psr\EventDispatcher\StoppableEventInterface;
-use Psr\Log\LoggerInterface;
 use Throwable;
 
 class AsyncEventDispatcher implements EventDispatcherInterface
@@ -24,22 +24,18 @@ class AsyncEventDispatcher implements EventDispatcherInterface
 
     private ListenerProviderInterface $listeners;
 
-    private LoggerInterface $logger;
-
     private AsyncEventService $asyncEventService;
 
-    private Locker $locker;
+    private ListenerAsyncDriverInterface $listenerAsyncDriver;
 
     public function __construct(
         ListenerProviderInterface $listeners,
-        LoggerInterface $logger,
         AsyncEventService $asyncEventService,
-        Locker $locker
+        ListenerAsyncDriverFactory $listenerAsyncDriverFactory,
     ) {
         $this->listeners = $listeners;
-        $this->logger = $logger;
         $this->asyncEventService = $asyncEventService;
-        $this->locker = $locker;
+        $this->listenerAsyncDriver = $listenerAsyncDriverFactory->create();
 
         $this->asyncListeners = AnnotationCollector::getClassesByAnnotation(AsyncListener::class);
     }
@@ -52,7 +48,7 @@ class AsyncEventDispatcher implements EventDispatcherInterface
         $asyncListeners = [];
         foreach ($this->listeners->getListenersForEvent($event) as $listener) {
             $listenerName = $this->getListenerName($listener);
-            if (isset($this->asyncListeners[$listenerName])) {
+            if (isset($this->asyncListeners[$listenerName]) || $listener instanceof AsyncListenerInterface) {
                 $asyncListeners[$listenerName] = $listener;
             } else {
                 $syncListeners[$listenerName] = $listener;
@@ -61,44 +57,29 @@ class AsyncEventDispatcher implements EventDispatcherInterface
 
         // 投递异步事件
         foreach ($asyncListeners as $listenerName => $listener) {
-            Coroutine::defer(function () use ($event, $listener, $eventName, $listenerName) {
-                $eventRecord = $this->asyncEventService->buildAsyncEventData($eventName, $listenerName, $event);
-                $eventModel = $this->asyncEventService->create($eventRecord);
-                $recordId = $eventModel->id;
-
-                $this->locker->get(function () use ($recordId, $listener, $event, $listenerName, $eventName) {
-                    $exception = null;
-                    try {
-                        $listener($event);
-                        $this->asyncEventService->delete($recordId);
-                    } catch (Throwable $exception) {
-                        $this->asyncEventService->markAsExecuting($recordId);
-                    } finally {
-                        $this->dump($recordId, $listenerName, $eventName, $exception);
-                    }
-                }, "async_event_retry_{$recordId}");
-            });
+            // 保证先落库后投递
+            $eventRecord = $this->asyncEventService->buildAsyncEventData($eventName, $listenerName, $event);
+            $eventModel = $this->asyncEventService->create($eventRecord);
+            $this->listenerAsyncDriver->publish($eventModel, $event, $listener);
         }
 
         // 剩下的直接同步执行
         foreach ($syncListeners as $listenerName => $listener) {
-            $listener($event);
-            $this->dump(0, $listenerName, $eventName);
+            $exception = null;
+            try {
+                $listener($event);
+            } catch (Throwable $throwable) {
+                $exception = $throwable;
+                throw $throwable;
+            } finally {
+                LogUtil::dump(0, $listenerName, $eventName, $exception);
+            }
             if ($event instanceof StoppableEventInterface && $event->isPropagationStopped()) {
                 break;
             }
         }
 
         return $event;
-    }
-
-    private function dump(int $recordId, string $listenerName, string $eventName, ?Throwable $exception = null): void
-    {
-        if ($exception) {
-            $this->logger->error(sprintf('[event_fail][%d]Event %s handled by %s listener. [exception]%s [trace]%s', $recordId, $eventName, $listenerName, $exception->getMessage(), $exception->getTraceAsString()));
-        } else {
-            $this->logger->debug(sprintf('[event_success][%d]Event %s handled by %s listener.', $recordId, $eventName, $listenerName));
-        }
     }
 
     private function getListenerName($listener): string

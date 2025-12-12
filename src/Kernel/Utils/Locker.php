@@ -29,7 +29,7 @@ class Locker
     public function acquire(string $name, string $owner, int $expire = 180): bool
     {
         $result = $this->locker->acquire($name, $owner, $expire);
-        $this->logger->info("获取锁[{$name}] {$result}");
+        $this->logger->debug("获取锁[{$name}] {$result}");
         return $result;
     }
 
@@ -39,7 +39,7 @@ class Locker
     public function release(string $name, string $owner): bool
     {
         $result = $this->locker->release($name, $owner);
-        $this->logger->info("释放锁[{$name}] {$result}");
+        $this->logger->debug("释放锁[{$name}] {$result}");
         return $result;
     }
 
