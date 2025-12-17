@@ -7,9 +7,8 @@ declare(strict_types=1);
 
 namespace Dtyq\AsyncEvent\Kernel\Crontab;
 
-use Dtyq\AsyncEvent\Kernel\AsyncEventRetry;
+use Dtyq\AsyncEvent\Kernel\Executor\AsyncListenerExecutor;
 use Dtyq\AsyncEvent\Kernel\Service\AsyncEventService;
-use Dtyq\AsyncEvent\Kernel\Utils\Locker;
 use Hyperf\Coroutine\Parallel;
 use Hyperf\Logger\LoggerFactory;
 use Psr\Log\LoggerInterface;
@@ -21,13 +20,13 @@ class RetryCrontab
 
     private LoggerInterface $logger;
 
-    private Locker $locker;
+    private AsyncListenerExecutor $asyncListenerExecutor;
 
-    public function __construct(AsyncEventService $asyncEventService, LoggerFactory $loggerFactory, Locker $locker)
+    public function __construct(AsyncEventService $asyncEventService, LoggerFactory $loggerFactory, AsyncListenerExecutor $asyncListenerExecutor)
     {
         $this->asyncEventService = $asyncEventService;
         $this->logger = $loggerFactory->get('RetryCrontab');
-        $this->locker = $locker;
+        $this->asyncListenerExecutor = $asyncListenerExecutor;
     }
 
     public function execute(): void
@@ -39,10 +38,7 @@ class RetryCrontab
             $parallel = new Parallel(30);
             foreach ($recordIds as $recordId) {
                 $parallel->add(function () use ($recordId) {
-                    $this->locker->get(function () use ($recordId) {
-                        $this->logger->info("Retry async event [{$recordId}].");
-                        AsyncEventRetry::retry($recordId);
-                    }, "async_event_retry_{$recordId}");
+                    $this->asyncListenerExecutor->retry($recordId);
                 });
             }
             $parallel->wait(false);

@@ -7,8 +7,8 @@ declare(strict_types=1);
 
 namespace Dtyq\AsyncEvent\Kernel\Command;
 
-use Dtyq\AsyncEvent\Kernel\AsyncEventRetry;
 use Dtyq\AsyncEvent\Kernel\Crontab\RetryCrontab;
+use Dtyq\AsyncEvent\Kernel\Executor\AsyncListenerExecutor;
 use Hyperf\Command\Annotation\Command;
 use Hyperf\Command\Command as HyperfCommand;
 use Symfony\Component\Console\Input\InputArgument;
@@ -32,7 +32,7 @@ class RetryCommand extends HyperfCommand
             make(RetryCrontab::class)->execute();
             return;
         }
-        AsyncEventRetry::retry($id);
+        di(AsyncListenerExecutor::class)->retry($id);
         $this->info("已触发重试事件 {$id}");
     }
 

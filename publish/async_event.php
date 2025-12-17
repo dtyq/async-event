@@ -5,7 +5,7 @@ declare(strict_types=1);
  * Copyright (c) The Magic , Distributed under the software license
  */
 return [
-    // 事件执行驱动配置 支持 coroutine、queue
+    // 事件执行驱动配置 支持 coroutine、queue_amqp
     'listener_exec_driver' => env('ASYNC_EVENT_LISTENER_EXEC_DRIVER', 'coroutine'),
 
     // 重试配置

@@ -16,7 +16,7 @@ class ListenerAsyncDriverFactory
         $container = ApplicationContext::getContainer();
         $driver = config('async_event.listener_exec_driver', 'coroutine');
         $class = match ($driver) {
-            'queue' => QueueListenerAsyncDriver::class,
+            'queue_amqp' => QueueAMQPListenerAsyncDriver::class,
             default => CoroutineListenerAsyncDriver::class,
         };
         return $container->get($class);

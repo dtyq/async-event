@@ -26,7 +26,8 @@ class LogUtil
                 'trace' => $exception->getTraceAsString(),
             ]);
         } else {
-            $logger->debug('ListenerSuccess', [
+            $logLevel = $recordId === 0 ? 'debug' : 'info';
+            $logger->{$logLevel}('ListenerSuccess', [
                 'record_id' => $recordId,
                 'event_name' => $eventName,
                 'listener_name' => $listenerName,

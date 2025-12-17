@@ -10,10 +10,19 @@ namespace Dtyq\AsyncEvent\Demo\Subscribe;
 use Dtyq\AsyncEvent\Demo\DemoEvent;
 use Hyperf\Event\Annotation\Listener;
 use Hyperf\Event\Contract\ListenerInterface;
+use Psr\Container\ContainerInterface;
+use Psr\Log\LoggerInterface;
 
 #[Listener]
 class DemoSyncSubscriber implements ListenerInterface
 {
+    private LoggerInterface $logger;
+
+    public function __construct(ContainerInterface $container)
+    {
+        $this->logger = $container->get(LoggerInterface::class);
+    }
+
     public function listen(): array
     {
         return [
@@ -26,5 +35,6 @@ class DemoSyncSubscriber implements ListenerInterface
         // Simulate processing time
         sleep(2);
         echo 'DemoSyncSubscriber processed event with data: ' . $event->getMessage() . PHP_EOL;
+        $this->logger->info('DemoSyncSubscriber processed event with data: ' . $event->getMessage());
     }
 }
