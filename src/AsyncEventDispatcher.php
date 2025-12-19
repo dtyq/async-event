@@ -55,6 +55,9 @@ class AsyncEventDispatcher implements EventDispatcherInterface
             }
         }
 
+        // 记录同步异常，保证异步事件可以触发执行
+        $lastException = null;
+
         // 直接同步执行
         foreach ($syncListeners as $listenerName => $listener) {
             $exception = null;
@@ -62,7 +65,8 @@ class AsyncEventDispatcher implements EventDispatcherInterface
                 $listener($event);
             } catch (Throwable $throwable) {
                 $exception = $throwable;
-                throw $throwable;
+                $lastException = $throwable;
+                break;
             } finally {
                 LogUtil::dump(0, $listenerName, $eventName, $exception);
             }
@@ -73,10 +77,19 @@ class AsyncEventDispatcher implements EventDispatcherInterface
 
         // 投递异步事件
         foreach ($asyncListeners as $listenerName => $listener) {
-            // 保证先落库后投递
-            $eventRecord = $this->asyncEventService->buildAsyncEventData($eventName, $listenerName, $event);
-            $eventModel = $this->asyncEventService->create($eventRecord);
-            $this->listenerAsyncDriver->publish($eventModel, $event, $listener);
+            try {
+                // 保证先落库后投递
+                $eventRecord = $this->asyncEventService->buildAsyncEventData($eventName, $listenerName, $event);
+                $eventModel = $this->asyncEventService->create($eventRecord);
+                $this->listenerAsyncDriver->publish($eventModel, $event, $listener);
+            } catch (\Throwable $throwable) {
+                // 保证其他异步事件可以继续投递
+                LogUtil::dump(1, $listenerName, $eventName, $throwable);
+            }
+        }
+
+        if ($lastException) {
+            throw $lastException;
         }
 
         return $event;
