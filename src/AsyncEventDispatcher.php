@@ -55,15 +55,7 @@ class AsyncEventDispatcher implements EventDispatcherInterface
             }
         }
 
-        // 投递异步事件
-        foreach ($asyncListeners as $listenerName => $listener) {
-            // 保证先落库后投递
-            $eventRecord = $this->asyncEventService->buildAsyncEventData($eventName, $listenerName, $event);
-            $eventModel = $this->asyncEventService->create($eventRecord);
-            $this->listenerAsyncDriver->publish($eventModel, $event, $listener);
-        }
-
-        // 剩下的直接同步执行
+        // 直接同步执行
         foreach ($syncListeners as $listenerName => $listener) {
             $exception = null;
             try {
@@ -77,6 +69,14 @@ class AsyncEventDispatcher implements EventDispatcherInterface
             if ($event instanceof StoppableEventInterface && $event->isPropagationStopped()) {
                 break;
             }
+        }
+
+        // 投递异步事件
+        foreach ($asyncListeners as $listenerName => $listener) {
+            // 保证先落库后投递
+            $eventRecord = $this->asyncEventService->buildAsyncEventData($eventName, $listenerName, $event);
+            $eventModel = $this->asyncEventService->create($eventRecord);
+            $this->listenerAsyncDriver->publish($eventModel, $event, $listener);
         }
 
         return $event;
