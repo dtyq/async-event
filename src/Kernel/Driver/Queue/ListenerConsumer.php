@@ -15,7 +15,7 @@ use PhpAmqpLib\Message\AMQPMessage;
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 
-#[Consumer(exchange: 'async_event_listener', routingKey: 'async_event_listener', name: 'AsyncEvent', nums: 2)]
+#[Consumer(exchange: 'async_event_listener', routingKey: 'async_event_listener', queue: 'ListenerConsumer', name: 'AsyncEvent', nums: 2)]
 class ListenerConsumer extends ConsumerMessage
 {
     private AsyncListenerExecutor $asyncListenerExecutor;
