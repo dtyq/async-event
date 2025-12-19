@@ -10,6 +10,7 @@ namespace Dtyq\AsyncEvent\Kernel\Service;
 use Dtyq\AsyncEvent\Kernel\Constants\Status;
 use Dtyq\AsyncEvent\Kernel\Persistence\AsyncEventRepository;
 use Dtyq\AsyncEvent\Kernel\Persistence\Model\AsyncEventModel;
+use Dtyq\AsyncEvent\Kernel\Utils\ContextDataUtil;
 use Hyperf\Snowflake\IdGeneratorInterface;
 
 class AsyncEventService
@@ -32,12 +33,15 @@ class AsyncEventService
     public function buildAsyncEventData(string $eventClassName, string $listenerClassName, object $event): array
     {
         $now = date('Y-m-d H:i:s');
+        $contextData = ContextDataUtil::readContextData();
+
         return [
             'id' => $this->generator->generate(),
             'event' => $eventClassName,
             'listener' => $listenerClassName,
             'status' => Status::STATE_WAIT,
             'args' => serialize($event),
+            'context_data' => empty($contextData) ? null : $contextData,
             'retry_times' => 0,
             'created_at' => $now,
             'updated_at' => $now,

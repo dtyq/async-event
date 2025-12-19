@@ -8,6 +8,7 @@ declare(strict_types=1);
 namespace Dtyq\AsyncEvent\Kernel\Driver\Queue;
 
 use Dtyq\AsyncEvent\Kernel\Executor\AsyncListenerExecutor;
+use Dtyq\AsyncEvent\Kernel\Utils\ContextDataUtil;
 use Hyperf\Amqp\Annotation\Consumer;
 use Hyperf\Amqp\Message\ConsumerMessage;
 use Hyperf\Amqp\Result;
@@ -40,6 +41,11 @@ class ListenerConsumer extends ConsumerMessage
         if (! $id) {
             return Result::ACK;
         }
+
+        // Set context data before executing listener
+        $contextData = $data['context_data'] ?? [];
+        ContextDataUtil::setContextData($contextData);
+
         $this->logger->info('ListenerConsumerReceivedMessage', ['id' => $id, 'data' => $data]);
         $this->asyncListenerExecutor->runWithId($id);
         return Result::ACK;

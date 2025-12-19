@@ -53,7 +53,12 @@
     },
     "extra": {
         "hyperf": {
-            "config": "Dtyq\\AsyncEvent\\ConfigProvider"
+            "config": "Dtyq\\AsyncEvent\\ConfigProvider",
+            "migrate": {
+                "paths": [
+                    "publish/migrations"
+                ]
+            }
         },
         "branch-alias": {
             "dev-master": "0.1-dev"

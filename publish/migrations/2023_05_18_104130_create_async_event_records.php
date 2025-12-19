@@ -15,6 +15,10 @@ class CreateAsyncEventRecords extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('async_event_records')) {
+            return;
+        }
+
         Schema::create('async_event_records', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->string('event', 255)->comment('事件');

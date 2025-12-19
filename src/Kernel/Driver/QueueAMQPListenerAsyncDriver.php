@@ -8,6 +8,7 @@ declare(strict_types=1);
 namespace Dtyq\AsyncEvent\Kernel\Driver;
 
 use Dtyq\AsyncEvent\Kernel\Persistence\Model\AsyncEventModel;
+use Dtyq\AsyncEvent\Kernel\Utils\ContextDataUtil;
 use Hyperf\Amqp\Producer;
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
@@ -32,7 +33,10 @@ class QueueAMQPListenerAsyncDriver implements ListenerAsyncDriverInterface
 
     public function publish(AsyncEventModel $asyncEventModel, object $event, callable $listener): void
     {
-        $this->producer->produce(new Queue\ListenerProducerMessage($asyncEventModel->id));
+        // Read context data based on config
+        $contextData = ContextDataUtil::readContextData();
+
+        $this->producer->produce(new Queue\ListenerProducerMessage($asyncEventModel->id, $contextData));
         $this->logger->info('AsyncEventPublishedToAMQP', [
             'async_event_id' => $asyncEventModel->id,
             'listener' => $asyncEventModel->listener,

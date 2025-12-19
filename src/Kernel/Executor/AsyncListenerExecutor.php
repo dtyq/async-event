@@ -11,6 +11,7 @@ use Dtyq\AsyncEvent\AsyncEventUtil;
 use Dtyq\AsyncEvent\Kernel\Event\AsyncEventRetryMaxEvent;
 use Dtyq\AsyncEvent\Kernel\Persistence\Model\AsyncEventModel;
 use Dtyq\AsyncEvent\Kernel\Service\AsyncEventService;
+use Dtyq\AsyncEvent\Kernel\Utils\ContextDataUtil;
 use Dtyq\AsyncEvent\Kernel\Utils\Locker;
 use Dtyq\AsyncEvent\Kernel\Utils\LogUtil;
 use Hyperf\Event\Contract\ListenerInterface;
@@ -41,6 +42,10 @@ class AsyncListenerExecutor
             if (! $record) {
                 return;
             }
+
+            // Restore context data before executing listener
+            $this->restoreContextData($record);
+
             $exception = null;
             try {
                 $listener = \Hyperf\Support\make($record->listener);
@@ -60,6 +65,9 @@ class AsyncListenerExecutor
     public function run(AsyncEventModel $asyncEventModel, object $event, callable $listener): void
     {
         $this->locker->get(function () use ($asyncEventModel, $listener, $event) {
+            // Restore context data before executing listener
+            $this->restoreContextData($asyncEventModel);
+
             $exception = null;
             try {
                 $listener($event);
@@ -79,6 +87,10 @@ class AsyncListenerExecutor
             if (! $record) {
                 return;
             }
+
+            // Restore context data before executing listener (important for retry)
+            $this->restoreContextData($record);
+
             $exception = null;
             try {
                 $listener = \Hyperf\Support\make($record->listener);
@@ -102,5 +114,16 @@ class AsyncListenerExecutor
                 LogUtil::dump($id, $record->listener, $record->event, $exception);
             }
         }, 'async_event_run_' . $id);
+    }
+
+    private function restoreContextData(AsyncEventModel $record): void
+    {
+        if (empty($record->context_data)) {
+            return;
+        }
+
+        if (is_array($record->context_data)) {
+            ContextDataUtil::setContextData($record->context_data);
+        }
     }
 }

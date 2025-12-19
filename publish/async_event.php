@@ -20,7 +20,7 @@ return [
     'max_retry_callback' => [null],
 
     // 协程上下文复制keys
-    'context_copy_keys' => ['request-id'],
+    'context_copy_keys' => ['request-id', 'language'],
 
     // 是否清理历史事件
     'clear_history' => env('ASYNC_EVENT_CLEAR_HISTORY', true),

@@ -82,7 +82,7 @@ class AsyncEventDispatcher implements EventDispatcherInterface
                 $eventRecord = $this->asyncEventService->buildAsyncEventData($eventName, $listenerName, $event);
                 $eventModel = $this->asyncEventService->create($eventRecord);
                 $this->listenerAsyncDriver->publish($eventModel, $event, $listener);
-            } catch (\Throwable $throwable) {
+            } catch (Throwable $throwable) {
                 // 保证其他异步事件可以继续投递
                 LogUtil::dump(1, $listenerName, $eventName, $throwable);
             }
