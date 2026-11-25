@@ -7,6 +7,7 @@ declare(strict_types=1);
 
 namespace Dtyq\AsyncEvent\Kernel\Security;
 
+use PhpToken;
 use ReflectionClass;
 use ReflectionException;
 use ReflectionNamedType;
@@ -20,16 +21,6 @@ use ReflectionType;
 class EventPayloadClassResolver
 {
     /**
-     * @var array<string, array{classes: array<string, string>, abstracts: array<string, string>}> 键为小写类名
-     */
-    protected static array $cache = [];
-
-    /**
-     * @var array<string, array<string, string>> 文件路径 => 小写别名 => 完整类名
-     */
-    protected static array $importCache = [];
-
-    /**
      * 注释类型中不代表类的关键字（PHPDoc 与 PHPStan 常用写法）。
      */
     private const DOC_BUILTIN_TYPES = [
@@ -38,6 +29,16 @@ class EventPayloadClassResolver
         'array-key', 'non-empty-array', 'non-empty-list', 'non-empty-string', 'positive-int', 'negative-int', 'class-string',
         'key-of', 'value-of', 'callable-string', 'literal-string', 'numeric-string',
     ];
+
+    /**
+     * @var array<string, array{classes: array<string, string>, abstracts: array<string, string>}> 键为小写类名
+     */
+    protected static array $cache = [];
+
+    /**
+     * @var array<string, array<string, string>> 文件路径 => 小写别名 => 完整类名
+     */
+    protected static array $importCache = [];
 
     /**
      * 返回某个类的类型树：可实例化的类（含自身）与遇到的接口、抽象类，键均为小写类名，值为原始类名。
@@ -147,7 +148,7 @@ class EventPayloadClassResolver
                 $typeString = $matches[1];
             }
         }
-        if ($typeString === '' || ! preg_match_all('/\\\\?[A-Za-z_][A-Za-z0-9_]*(?:\\\\[A-Za-z_][A-Za-z0-9_]*)*/', $typeString, $matches)) {
+        if ($typeString === '' || ! preg_match_all('/\\\?[A-Za-z_][A-Za-z0-9_]*(?:\\\[A-Za-z_][A-Za-z0-9_]*)*/', $typeString, $matches)) {
             return [];
         }
         $names = [];
@@ -194,7 +195,7 @@ class EventPayloadClassResolver
             return self::$importCache[$file];
         }
         $imports = [];
-        $tokens = \PhpToken::tokenize((string) file_get_contents($file));
+        $tokens = PhpToken::tokenize((string) file_get_contents($file));
         $count = count($tokens);
         for ($i = 0; $i < $count; ++$i) {
             $token = $tokens[$i];

@@ -16,6 +16,7 @@ use HyperfTest\Cases\Security\Fixture\FixtureBatchEvent;
 use HyperfTest\Cases\Security\Fixture\FixtureChildEvent;
 use HyperfTest\Cases\Security\Fixture\FixtureEntity;
 use HyperfTest\Cases\Security\Fixture\FixtureEvent;
+use HyperfTest\Cases\Security\Fixture\FixtureExtendedMeta;
 use HyperfTest\Cases\Security\Fixture\FixtureLocalFile;
 use HyperfTest\Cases\Security\Fixture\FixtureMeta;
 use HyperfTest\Cases\Security\Fixture\FixtureProbe;
@@ -82,6 +83,21 @@ class AsyncEventArgsUnserializerTest extends AbstractTestCase
         } catch (AsyncEventPayloadException) {
         }
         $this->assertSame([], FixtureProbe::$events);
+    }
+
+    public function testAcceptsSubclassOfConcretePropertyTypeInSameNamespace(): void
+    {
+        $entity = new FixtureEntity();
+        $extended = new FixtureExtendedMeta();
+        $extended->extra = new FixtureLocalFile();
+        $entity->either = $extended;
+        $entity->metas = [new FixtureExtendedMeta()];
+
+        $restored = AsyncEventArgsUnserializer::unserialize(serialize(new FixtureEvent($entity)), FixtureEvent::class, [FixtureEvent::class]);
+
+        $this->assertInstanceOf(FixtureExtendedMeta::class, $restored->entity->either);
+        $this->assertInstanceOf(FixtureLocalFile::class, $restored->entity->either->extra);
+        $this->assertInstanceOf(FixtureExtendedMeta::class, $restored->entity->metas[0]);
     }
 
     public function testAcceptsSubclassOfListenedEventInSameNamespace(): void

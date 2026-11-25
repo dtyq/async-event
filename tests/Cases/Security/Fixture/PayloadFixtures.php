@@ -26,12 +26,20 @@ class FixtureLocalFile implements FixtureFileInterface
 {
     public string $path = 'local';
 
-    public ?FixtureMeta $meta = null;
+    public ?FixtureDate $meta = null;
 }
 
 class FixtureMeta
 {
     public string $name = 'meta';
+}
+
+/**
+ * 测试夹具：同一顶层命名空间下继承具体类的子类，模拟扩展包继承主仓库实体。
+ */
+class FixtureExtendedMeta extends FixtureDate
+{
+    public ?FixtureLocalFile $extra = null;
 }
 
 class FixtureEntity
@@ -46,7 +54,7 @@ class FixtureEntity
 
     public FixtureLocalFile|FixtureMeta|null $either = null;
 
-    /** @var FixtureMeta[] */
+    /** @var FixtureDate[] */
     public array $metas = [];
 
     /** @var array<string, FixtureDate> */

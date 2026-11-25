@@ -8,6 +8,7 @@ declare(strict_types=1);
 namespace Dtyq\AsyncEvent\Kernel\Security;
 
 use __PHP_Incomplete_Class;
+use DateTimeInterface;
 use Throwable;
 use UnitEnum;
 
@@ -28,6 +29,11 @@ class AsyncEventArgsUnserializer
      * 始终允许的 PHP 内置类：日期类和 stdClass 没有可被利用的魔术方法，且不属于任何命名空间。
      */
     private const BUILTIN_SAFE_CLASSES = ['DateTime', 'DateTimeImmutable', 'DateTimeZone', 'DateInterval', 'DatePeriod', 'stdClass'];
+
+    /**
+     * 允许作为 DateTimeInterface 实现出现的日期库顶层命名空间（小写）。事件中常以 DateTimeInterface 声明、实际存放 Carbon。
+     */
+    private const DATE_LIBRARY_ROOTS = ['carbon'];
 
     /**
      * 反序列化记录中的 args，返回事件对象；任何一项校验不通过都抛出 AsyncEventPayloadException。
@@ -98,7 +104,9 @@ class AsyncEventArgsUnserializer
     }
 
     /**
-     * 根据事件类型树计算允许的类：不在树中的类名，只有是树中接口或抽象类在同一顶层命名空间下的实现时才放行，并继续展开其类型树。
+     * 根据事件类型树计算允许的类。不在树中的类名，满足以下任一条件才放行，并继续展开其类型树：
+     * 是树中接口、抽象类或具体类在同一顶层命名空间下的实现或子类（例如扩展包继承主仓库实体）；
+     * 或是 DateTimeInterface 在已知日期库命名空间下的实现（如 Carbon）。
      *
      * @param array<string, string> $names 第一遍解析出的类名，键为小写类名
      * @return array<string, string> 允许的类，键为小写类名
@@ -115,19 +123,13 @@ class AsyncEventArgsUnserializer
         do {
             $changed = false;
             foreach ($names as $key => $name) {
-                if (isset($classes[$key])) {
+                if (isset($classes[$key]) || ! self::isAcceptedExtension($name, $abstracts + $classes)) {
                     continue;
                 }
-                foreach ($abstracts as $abstract) {
-                    // 先做命名空间字符串判断，再加载类，避免加载其他命名空间的类
-                    if (self::sameRootNamespace($name, $abstract) && class_exists($name) && is_subclass_of($name, $abstract)) {
-                        $implementation = EventPayloadClassResolver::resolve($name);
-                        $classes += $implementation['classes'];
-                        $abstracts += $implementation['abstracts'];
-                        $changed = true;
-                        break;
-                    }
-                }
+                $extension = EventPayloadClassResolver::resolve($name);
+                $classes += $extension['classes'];
+                $abstracts += $extension['abstracts'];
+                $changed = true;
             }
         } while ($changed);
 
@@ -136,6 +138,25 @@ class AsyncEventArgsUnserializer
             throw new AsyncEventPayloadException('async event args contains classes outside the event definition: ' . implode(', ', $rejected));
         }
         return array_intersect_key($classes, $names);
+    }
+
+    /**
+     * 判断类型树之外的类名能否放行：先做命名空间字符串判断再加载类，避免加载其他命名空间的类。
+     *
+     * @param array<string, string> $bases 类型树中的接口、抽象类和具体类
+     */
+    private static function isAcceptedExtension(string $name, array $bases): bool
+    {
+        $root = strstr(ltrim($name, '\\'), '\\', true);
+        if ($root !== false && in_array(strtolower($root), self::DATE_LIBRARY_ROOTS, true)) {
+            return class_exists($name) && is_subclass_of($name, DateTimeInterface::class);
+        }
+        foreach ($bases as $base) {
+            if (self::sameRootNamespace($name, $base) && class_exists($name) && is_subclass_of($name, $base)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
