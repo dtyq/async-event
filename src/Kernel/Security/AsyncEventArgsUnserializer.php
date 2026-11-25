@@ -1,0 +1,227 @@
+<?php
+
+declare(strict_types=1);
+/**
+ * Copyright (c) The Magic , Distributed under the software license
+ */
+
+namespace Dtyq\AsyncEvent\Kernel\Security;
+
+use __PHP_Incomplete_Class;
+use Throwable;
+use UnitEnum;
+
+/**
+ * 受限反序列化异步事件参数：只允许事件类型树中的类，以及树中接口、抽象类在同一顶层命名空间下的实现。
+ * 先以不允许任何类的方式解析出实际出现的类名并逐个校验，全部通过后才正式反序列化，名单外的类不会被实例化。
+ */
+class AsyncEventArgsUnserializer
+{
+    /**
+     * 递归检查的最大深度，防止异常数据导致无限递归。
+     */
+    private const MAX_DEPTH = 256;
+
+    private const INCOMPLETE_CLASS_NAME_KEY = '__PHP_Incomplete_Class_Name';
+
+    /**
+     * 始终允许的 PHP 内置类：日期类和 stdClass 没有可被利用的魔术方法，且不属于任何命名空间。
+     */
+    private const BUILTIN_SAFE_CLASSES = ['DateTime', 'DateTimeImmutable', 'DateTimeZone', 'DateInterval', 'DatePeriod', 'stdClass'];
+
+    /**
+     * 反序列化记录中的 args，返回事件对象；任何一项校验不通过都抛出 AsyncEventPayloadException。
+     *
+     * @param string $args 记录中的序列化参数
+     * @param string $eventClass 记录中的事件类名
+     * @param array<int|string, mixed> $listenedEvents 监听器 listen() 声明的事件类
+     */
+    public static function unserialize(string $args, string $eventClass, array $listenedEvents): object
+    {
+        $eventClass = ltrim($eventClass, '\\');
+        self::assertListenedEvent($eventClass, $listenedEvents);
+
+        // 第一遍：不允许任何类，对象全部成为不完整对象，不会实例化真实的类，也不会触发魔术方法
+        $raw = @unserialize($args, ['allowed_classes' => false]);
+        if (! $raw instanceof __PHP_Incomplete_Class) {
+            throw new AsyncEventPayloadException('async event args top level is not an object');
+        }
+        $names = [];
+        $seen = [];
+        self::collectClassNames($raw, $names, $seen, 0);
+        $topName = (string) (((array) $raw)[self::INCOMPLETE_CLASS_NAME_KEY] ?? '');
+        if (strcasecmp($topName, $eventClass) !== 0) {
+            throw new AsyncEventPayloadException(sprintf('async event args class %s does not match event %s', $topName, $eventClass));
+        }
+
+        $allowed = self::allowedClassNames($eventClass, $names);
+
+        // 第二遍：只允许已校验的类；带类型属性遇到名单外的类时 PHP 会抛出 TypeError
+        try {
+            $event = unserialize($args, ['allowed_classes' => array_values($allowed)]);
+        } catch (Throwable $throwable) {
+            throw new AsyncEventPayloadException('async event args unserialize failed: ' . $throwable->getMessage(), 0, $throwable);
+        }
+        if (! is_object($event) || strcasecmp(get_class($event), $eventClass) !== 0) {
+            throw new AsyncEventPayloadException('async event args unserialize result does not match event');
+        }
+        $seen = [];
+        if (self::containsIncompleteClass($event, $seen, 0)) {
+            throw new AsyncEventPayloadException('async event args contains classes outside the event definition');
+        }
+        return $event;
+    }
+
+    /**
+     * 事件类必须是监听器声明的事件或其子类；通过父类或接口匹配时，事件类须与声明类型位于同一顶层命名空间。
+     *
+     * @param array<int|string, mixed> $listenedEvents
+     */
+    private static function assertListenedEvent(string $eventClass, array $listenedEvents): void
+    {
+        if ($eventClass === '' || ! class_exists($eventClass)) {
+            throw new AsyncEventPayloadException(sprintf('async event class %s does not exist', $eventClass));
+        }
+        foreach ($listenedEvents as $declared) {
+            if (! is_string($declared) || $declared === '') {
+                continue;
+            }
+            $declared = ltrim($declared, '\\');
+            if (strcasecmp($declared, $eventClass) === 0) {
+                return;
+            }
+            if (is_a($eventClass, $declared, true) && self::sameRootNamespace($eventClass, $declared)) {
+                return;
+            }
+        }
+        throw new AsyncEventPayloadException(sprintf('async event class %s is not listened by the listener', $eventClass));
+    }
+
+    /**
+     * 根据事件类型树计算允许的类：不在树中的类名，只有是树中接口或抽象类在同一顶层命名空间下的实现时才放行，并继续展开其类型树。
+     *
+     * @param array<string, string> $names 第一遍解析出的类名，键为小写类名
+     * @return array<string, string> 允许的类，键为小写类名
+     */
+    private static function allowedClassNames(string $eventClass, array $names): array
+    {
+        $tree = EventPayloadClassResolver::resolve($eventClass);
+        $classes = $tree['classes'];
+        foreach (self::BUILTIN_SAFE_CLASSES as $builtin) {
+            $classes[strtolower($builtin)] = $builtin;
+        }
+        $abstracts = $tree['abstracts'];
+
+        do {
+            $changed = false;
+            foreach ($names as $key => $name) {
+                if (isset($classes[$key])) {
+                    continue;
+                }
+                foreach ($abstracts as $abstract) {
+                    // 先做命名空间字符串判断，再加载类，避免加载其他命名空间的类
+                    if (self::sameRootNamespace($name, $abstract) && class_exists($name) && is_subclass_of($name, $abstract)) {
+                        $implementation = EventPayloadClassResolver::resolve($name);
+                        $classes += $implementation['classes'];
+                        $abstracts += $implementation['abstracts'];
+                        $changed = true;
+                        break;
+                    }
+                }
+            }
+        } while ($changed);
+
+        $rejected = array_diff_key($names, $classes);
+        if ($rejected !== []) {
+            throw new AsyncEventPayloadException('async event args contains classes outside the event definition: ' . implode(', ', $rejected));
+        }
+        return array_intersect_key($classes, $names);
+    }
+
+    /**
+     * 递归收集第一遍解析结果中出现的类名（不完整对象的原始类名）；枚举不受 allowed_classes 限制且不能定义魔术方法，跳过。
+     *
+     * @param array<string, string> $names
+     * @param array<int, true> $seen
+     */
+    private static function collectClassNames(mixed $value, array &$names, array &$seen, int $depth): void
+    {
+        if ($depth > self::MAX_DEPTH) {
+            throw new AsyncEventPayloadException('async event args nesting is too deep');
+        }
+        if (is_array($value)) {
+            foreach ($value as $item) {
+                self::collectClassNames($item, $names, $seen, $depth + 1);
+            }
+            return;
+        }
+        if (! is_object($value) || $value instanceof UnitEnum) {
+            return;
+        }
+        $id = spl_object_id($value);
+        if (isset($seen[$id])) {
+            return;
+        }
+        $seen[$id] = true;
+        $properties = (array) $value;
+        if ($value instanceof __PHP_Incomplete_Class) {
+            $name = (string) ($properties[self::INCOMPLETE_CLASS_NAME_KEY] ?? '');
+            unset($properties[self::INCOMPLETE_CLASS_NAME_KEY]);
+        } else {
+            $name = get_class($value);
+        }
+        if ($name !== '') {
+            $names[strtolower($name)] = $name;
+        }
+        foreach ($properties as $item) {
+            self::collectClassNames($item, $names, $seen, $depth + 1);
+        }
+    }
+
+    /**
+     * 检查反序列化结果中任意位置是否残留不完整对象。
+     *
+     * @param array<int, true> $seen
+     */
+    private static function containsIncompleteClass(mixed $value, array &$seen, int $depth): bool
+    {
+        if ($depth > self::MAX_DEPTH) {
+            throw new AsyncEventPayloadException('async event args nesting is too deep');
+        }
+        if ($value instanceof __PHP_Incomplete_Class) {
+            return true;
+        }
+        if (is_array($value)) {
+            foreach ($value as $item) {
+                if (self::containsIncompleteClass($item, $seen, $depth + 1)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (! is_object($value) || $value instanceof UnitEnum) {
+            return false;
+        }
+        $id = spl_object_id($value);
+        if (isset($seen[$id])) {
+            return false;
+        }
+        $seen[$id] = true;
+        foreach ((array) $value as $item) {
+            if (self::containsIncompleteClass($item, $seen, $depth + 1)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 两个类名是否位于同一顶层命名空间（如都在 App\ 下）；没有命名空间的类不视为同一命名空间。
+     */
+    private static function sameRootNamespace(string $a, string $b): bool
+    {
+        $rootA = strstr(ltrim($a, '\\'), '\\', true);
+        $rootB = strstr(ltrim($b, '\\'), '\\', true);
+        return $rootA !== false && $rootB !== false && strcasecmp($rootA, $rootB) === 0;
+    }
+}

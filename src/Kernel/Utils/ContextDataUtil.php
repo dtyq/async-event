@@ -16,7 +16,7 @@ class ContextDataUtil
      */
     public static function readContextData(): array
     {
-        $copyKeys = config('async_event.context_copy_keys', []);
+        $copyKeys = \Hyperf\Config\config('async_event.context_copy_keys', []);
         if (empty($copyKeys)) {
             return [];
         }
@@ -40,8 +40,15 @@ class ContextDataUtil
      */
     public static function setContextData(array $contextData): void
     {
+        // 记录中的 context_data 来自数据库，只恢复写入时允许复制的键，避免写入任意上下文
+        $copyKeys = \Hyperf\Config\config('async_event.context_copy_keys', []);
+        if (empty($copyKeys)) {
+            return;
+        }
         foreach ($contextData as $key => $value) {
-            Context::set($key, $value);
+            if (in_array($key, $copyKeys, true)) {
+                Context::set($key, $value);
+            }
         }
     }
 
