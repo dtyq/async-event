@@ -9,11 +9,14 @@ namespace Dtyq\AsyncEvent\Kernel\Security;
 
 use __PHP_Incomplete_Class;
 use DateTimeInterface;
+use ReflectionClass;
+use Serializable;
 use Throwable;
 use UnitEnum;
 
 /**
- * 受限反序列化异步事件参数：只允许事件类型树中的类，以及树中接口、抽象类在同一顶层命名空间下的实现。
+ * 受限反序列化异步事件参数：只允许事件类型树中的类、树中类型在同一顶层命名空间下的实现与子类，
+ * 以及与类型树同一顶层命名空间、且不带反序列化入口方法的类（兜底未声明元素类型的数组等宽松属性）。
  * 先以不允许任何类的方式解析出实际出现的类名并逐个校验，全部通过后才正式反序列化，名单外的类不会被实例化。
  */
 class AsyncEventArgsUnserializer
@@ -34,6 +37,11 @@ class AsyncEventArgsUnserializer
      * 允许作为 DateTimeInterface 实现出现的日期库顶层命名空间（小写）。事件中常以 DateTimeInterface 声明、实际存放 Carbon。
      */
     private const DATE_LIBRARY_ROOTS = ['carbon'];
+
+    /**
+     * 反序列化利用链的入口方法：反序列化完成或对象销毁时由 PHP 自动调用。兜底放行的类不能定义这些方法。
+     */
+    private const UNSERIALIZE_ENTRY_METHODS = ['__wakeup', '__unserialize', '__destruct'];
 
     /**
      * 反序列化记录中的 args，返回事件对象；任何一项校验不通过都抛出 AsyncEventPayloadException。
@@ -107,6 +115,7 @@ class AsyncEventArgsUnserializer
      * 根据事件类型树计算允许的类。不在树中的类名，满足以下任一条件才放行，并继续展开其类型树：
      * 是树中接口、抽象类或具体类在同一顶层命名空间下的实现或子类（例如扩展包继承主仓库实体）；
      * 或是 DateTimeInterface 在已知日期库命名空间下的实现（如 Carbon）。
+     * 仍未放行的类名再走兜底规则（见 isInertClassInRoots）；兜底放行的类不展开其类型树，其中出现的类各自校验。
      *
      * @param array<string, string> $names 第一遍解析出的类名，键为小写类名
      * @return array<string, string> 允许的类，键为小写类名
@@ -133,6 +142,13 @@ class AsyncEventArgsUnserializer
             }
         } while ($changed);
 
+        $roots = self::rootNamespaces($classes);
+        foreach (array_diff_key($names, $classes) as $key => $name) {
+            if (self::isInertClassInRoots($name, $roots)) {
+                $classes[$key] = $name;
+            }
+        }
+
         $rejected = array_diff_key($names, $classes);
         if ($rejected !== []) {
             throw new AsyncEventPayloadException('async event args contains classes outside the event definition: ' . implode(', ', $rejected));
@@ -157,6 +173,49 @@ class AsyncEventArgsUnserializer
             }
         }
         return false;
+    }
+
+    /**
+     * 兜底规则：类型树之外、位于类型树某个顶层命名空间下的用户类，只要没有反序列化入口方法、也没有实现 Serializable，就放行。
+     * 用于未声明元素类型的数组等宽松属性中存放的项目内部对象（例如只声明为 array、实际存放值对象的属性）。
+     * 这类对象在反序列化时不会自动执行任何代码，无法作为利用链的起点；先做命名空间字符串判断再加载类，避免加载其他命名空间的类。
+     *
+     * @param array<string, true> $roots 小写顶层命名空间
+     */
+    private static function isInertClassInRoots(string $name, array $roots): bool
+    {
+        $root = strstr(ltrim($name, '\\'), '\\', true);
+        if ($root === false || ! isset($roots[strtolower($root)]) || ! class_exists($name)) {
+            return false;
+        }
+        $reflection = new ReflectionClass($name);
+        if ($reflection->isInternal() || ! $reflection->isInstantiable() || $reflection->implementsInterface(Serializable::class)) {
+            return false;
+        }
+        foreach (self::UNSERIALIZE_ENTRY_METHODS as $method) {
+            if ($reflection->hasMethod($method)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * 收集允许类所在的顶层命名空间（小写）；没有命名空间的类（如 PHP 内置类）不计入。
+     *
+     * @param array<string, string> $classes
+     * @return array<string, true>
+     */
+    private static function rootNamespaces(array $classes): array
+    {
+        $roots = [];
+        foreach ($classes as $class) {
+            $root = strstr(ltrim($class, '\\'), '\\', true);
+            if ($root !== false) {
+                $roots[strtolower($root)] = true;
+            }
+        }
+        return $roots;
     }
 
     /**

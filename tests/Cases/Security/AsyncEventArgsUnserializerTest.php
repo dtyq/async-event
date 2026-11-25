@@ -7,6 +7,7 @@ declare(strict_types=1);
 
 namespace HyperfTest\Cases\Security;
 
+use AsyncEventForeignFixture\ForeignInertItem;
 use DateTimeImmutable;
 use Dtyq\AsyncEvent\Kernel\Security\AsyncEventArgsUnserializer;
 use Dtyq\AsyncEvent\Kernel\Security\AsyncEventPayloadException;
@@ -17,13 +18,17 @@ use HyperfTest\Cases\Security\Fixture\FixtureChildEvent;
 use HyperfTest\Cases\Security\Fixture\FixtureEntity;
 use HyperfTest\Cases\Security\Fixture\FixtureEvent;
 use HyperfTest\Cases\Security\Fixture\FixtureExtendedMeta;
+use HyperfTest\Cases\Security\Fixture\FixtureInertHolder;
+use HyperfTest\Cases\Security\Fixture\FixtureInertItem;
 use HyperfTest\Cases\Security\Fixture\FixtureLocalFile;
 use HyperfTest\Cases\Security\Fixture\FixtureMeta;
 use HyperfTest\Cases\Security\Fixture\FixtureProbe;
 use HyperfTest\Cases\Security\Fixture\FixtureStatus;
+use HyperfTest\Cases\Security\Fixture\FixtureUnserializeHook;
 use HyperfTest\Cases\Security\Fixture\FixtureUntypedEvent;
 
 require_once __DIR__ . '/Fixture/PayloadFixtures.php';
+require_once __DIR__ . '/Fixture/ForeignFixtures.php';
 
 /**
  * 验证受限反序列化：合法事件正常还原，名单外的类不会被实例化，事件类必须与监听器声明匹配。
@@ -125,6 +130,60 @@ class AsyncEventArgsUnserializerTest extends AbstractTestCase
         $event->payload = new FixtureProbe();
         $payload = serialize($event);
         unset($event);
+        FixtureProbe::$events = [];
+        try {
+            AsyncEventArgsUnserializer::unserialize($payload, FixtureUntypedEvent::class, [FixtureUntypedEvent::class]);
+            $this->fail('expected rejection');
+        } catch (AsyncEventPayloadException) {
+        }
+        $this->assertSame([], FixtureProbe::$events);
+    }
+
+    public function testAcceptsInertSameNamespaceObjectsInLooseProperty(): void
+    {
+        $item = new FixtureInertItem();
+        $item->children = [new FixtureInertItem()];
+        $event = new FixtureUntypedEvent();
+        $event->payload = ['items' => [$item], 'single' => new FixtureInertItem()];
+
+        $restored = AsyncEventArgsUnserializer::unserialize(serialize($event), FixtureUntypedEvent::class, [FixtureUntypedEvent::class]);
+
+        $this->assertInstanceOf(FixtureInertItem::class, $restored->payload['items'][0]);
+        $this->assertInstanceOf(FixtureInertItem::class, $restored->payload['items'][0]->children[0]);
+        $this->assertInstanceOf(FixtureInertItem::class, $restored->payload['single']);
+    }
+
+    public function testRejectsInertObjectFromOtherRootNamespace(): void
+    {
+        $event = new FixtureUntypedEvent();
+        $event->payload = [new ForeignInertItem()];
+
+        $this->expectException(AsyncEventPayloadException::class);
+        AsyncEventArgsUnserializer::unserialize(serialize($event), FixtureUntypedEvent::class, [FixtureUntypedEvent::class]);
+    }
+
+    public function testRejectsSameNamespaceClassWithUnserializeHookWithoutInstantiation(): void
+    {
+        $event = new FixtureUntypedEvent();
+        $event->payload = [new FixtureUnserializeHook()];
+        $payload = serialize($event);
+        FixtureUnserializeHook::$events = [];
+        try {
+            AsyncEventArgsUnserializer::unserialize($payload, FixtureUntypedEvent::class, [FixtureUntypedEvent::class]);
+            $this->fail('expected rejection');
+        } catch (AsyncEventPayloadException) {
+        }
+        $this->assertSame([], FixtureUnserializeHook::$events);
+    }
+
+    public function testFallbackClassDoesNotAllowItsTypedProbeProperty(): void
+    {
+        $holder = new FixtureInertHolder();
+        $holder->probe = new FixtureProbe();
+        $event = new FixtureUntypedEvent();
+        $event->payload = [$holder];
+        $payload = serialize($event);
+        unset($event, $holder);
         FixtureProbe::$events = [];
         try {
             AsyncEventArgsUnserializer::unserialize($payload, FixtureUntypedEvent::class, [FixtureUntypedEvent::class]);

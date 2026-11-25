@@ -108,9 +108,50 @@ class FixtureProbe
 }
 
 /**
- * 属性没有类型声明的事件：其中装的对象无法从类型声明收集，应被拒绝（失败即安全）。
+ * 属性没有类型声明的事件：其中装的对象无法从类型声明收集，只能走兜底规则。
  */
 class FixtureUntypedEvent
 {
     public $payload;
+}
+
+/**
+ * 测试夹具：不在任何类型声明中、也没有反序列化入口方法的值对象，模拟只声明为 array 的属性里存放的对象。
+ */
+class FixtureInertItem
+{
+    public string $name = 'item';
+
+    /** @var array<int, mixed> */
+    public array $children = [];
+}
+
+/**
+ * 测试夹具：本身没有入口方法，但带类型的属性指向探针；兜底放行它时不能连带放行探针。
+ */
+class FixtureInertHolder
+{
+    public ?FixtureProbe $probe = null;
+}
+
+/**
+ * 测试夹具：只定义了 __unserialize 的类，兜底规则不能放行。
+ */
+class FixtureUnserializeHook
+{
+    /** @var string[] */
+    public static array $events = [];
+
+    public string $name = 'hook';
+
+    public function __serialize(): array
+    {
+        return ['name' => $this->name];
+    }
+
+    public function __unserialize(array $data): void
+    {
+        self::$events[] = 'unserialize';
+        $this->name = (string) ($data['name'] ?? '');
+    }
 }
