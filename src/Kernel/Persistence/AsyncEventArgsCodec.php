@@ -35,10 +35,13 @@ class AsyncEventArgsCodec
     }
 
     /**
-     * 能力缺失时保留原文，具备能力且最终存储体积更小时才压缩。
+     * 默认保留原文，显式开启且具备能力、最终存储体积更小时才压缩。
      */
     public function encode(string $args): string
     {
+        if (! $this->config->get('async_event.args_compression.enabled', false)) {
+            return $args;
+        }
         if (! function_exists('gzencode') || ! function_exists('gzdecode')) {
             return $args;
         }

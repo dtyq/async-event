@@ -170,9 +170,10 @@ class AsyncEventRepositoryTest extends AbstractTestCase
     }
 
     /**
-     * 默认创建、读取及成功删除仅访问 Redis，压缩透明且保留大整数 ID。
+     * 创建、读取及成功删除仅访问 Redis，压缩开关不影响正文还原与大整数 ID。
+     * @dataProvider compressionSettings
      */
-    public function testSuccessfulRedisLifecycleDoesNotIssueMysqlQueries(): void
+    public function testSuccessfulRedisLifecycleDoesNotIssueMysqlQueries(array $compressionConfig, bool $compressed): void
     {
         $record = $this->record(str_repeat('synthetic-payload-', 700));
         $stored = [];
@@ -188,11 +189,15 @@ class AsyncEventRepositoryTest extends AbstractTestCase
                 }
                 return $method === 'exists' ? 1 : $stored;
             });
-        $repo = $this->repository();
+        $repo = $this->repository($compressionConfig);
         $created = $repo->create($record);
         self::assertFalse($created->exists);
         self::assertSame($record['args'], $created->args);
-        self::assertLessThan(strlen($record['args']), strlen($stored['args']));
+        if ($compressed) {
+            self::assertLessThan(strlen($record['args']), strlen($stored['args']));
+        } else {
+            self::assertSame($record['args'], $stored['args']);
+        }
         $loaded = $repo->getById(self::ID);
         self::assertSame(self::ID, $loaded->id);
         self::assertSame($record['args'], $loaded->args);
@@ -201,6 +206,18 @@ class AsyncEventRepositoryTest extends AbstractTestCase
         self::assertTrue($repo->exists(self::ID));
         self::assertSame(1, $repo->deleteById(self::ID));
         self::assertSame([], $this->queries);
+    }
+
+    /**
+     * 缺失配置和显式关闭均写原文，显式开启才压缩合成大正文。
+     */
+    public static function compressionSettings(): array
+    {
+        return [
+            'missing' => [[], false],
+            'disabled' => [['enabled' => false], false],
+            'enabled' => [['enabled' => true], true],
+        ];
     }
 
     /**
@@ -520,7 +537,7 @@ class AsyncEventRepositoryTest extends AbstractTestCase
     }
 
     /**
-     * 数据库中的压缩存量与新 Redis 正文使用相同解码契约。
+     * 未配置压缩开关时仍兼容数据库中的历史压缩存量。
      */
     public function testCompressedDatabaseRecordIsDecoded(): void
     {
@@ -536,6 +553,19 @@ class AsyncEventRepositoryTest extends AbstractTestCase
         ];
         self::assertSame($raw, $this->repository()
             ->getById(self::ID)->args);
+    }
+
+    /**
+     * 显式关闭新写入压缩后，Redis 压缩存量仍可读取且不访问 MySQL。
+     */
+    public function testCompressedRedisRecordIsDecodedWhenCompressionDisabled(): void
+    {
+        $raw = str_repeat('synthetic-', 1000);
+        $encoded = '@async-event-args:v1:' . strlen($raw) . ':' . base64_encode(gzencode($raw));
+        $this->redisRecords([$this->record($encoded)]);
+        self::assertSame($raw, $this->repository(['enabled' => false])
+            ->getById(self::ID)->args);
+        self::assertSame([], $this->queries);
     }
 
     /**
@@ -616,7 +646,7 @@ class AsyncEventRepositoryTest extends AbstractTestCase
                 $stored[] = $this->fields($args[1])['args'];
                 return 1;
             });
-        $repo = $this->repository();
+        $repo = $this->repository(['enabled' => true]);
         foreach ([
             'small',
             $noise,
@@ -926,18 +956,18 @@ class AsyncEventRepositoryTest extends AbstractTestCase
     }
 
     /**
-     * 固定合成配置，不设置写入后端或兼容、压缩开关。
+     * 提供合成配置，默认缺失压缩开关，可按用例显式覆盖压缩配置。
      */
-    private function repository(): AsyncEventRepository
+    private function repository(array $compressionConfig = []): AsyncEventRepository
     {
         $this->factory->method('get')
             ->with('default')
             ->willReturn($this->redis);
         $config = new Config([
             'async_event' => [
-                'args_compression' => [
+                'args_compression' => array_merge([
                     'max_decoded_bytes' => 1048576,
-                ],
+                ], $compressionConfig),
             ],
         ]);
         return new AsyncEventRepository(

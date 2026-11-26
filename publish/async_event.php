@@ -16,8 +16,9 @@ return [
         ],
     ],
 
-    // args 自动按体积收益压缩，仅保留解压内存额度配置；默认 16 MiB。
+    // args 默认不压缩；开关只控制新写入，始终兼容读取历史压缩数据。
     'args_compression' => [
+        'enabled' => (bool) env('ASYNC_EVENT_ARGS_COMPRESSION_ENABLED', false),
         'max_decoded_bytes' => (int) env('ASYNC_EVENT_ARGS_MAX_DECODED_BYTES', 16 * 1024 * 1024),
     ],
 
