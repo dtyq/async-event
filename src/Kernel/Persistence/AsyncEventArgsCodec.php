@@ -47,7 +47,7 @@ class AsyncEventArgsCodec
      */
     public function encode(string $args): string
     {
-        if (! $this->config->get('async_event.args_compression.enabled', false)) {
+        if (! $this->config->get('async_event.args_compression.enabled', true)) {
             return $args;
         }
         if (! function_exists('gzencode') || ! function_exists('gzdecode')) {

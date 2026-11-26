@@ -209,12 +209,12 @@ class AsyncEventRepositoryTest extends AbstractTestCase
     }
 
     /**
-     * 缺失配置和显式关闭均写原文，显式开启才压缩合成大正文。
+     * 缺失配置时默认按策略压缩，显式关闭写原文，显式开启沿用策略。
      */
     public static function compressionSettings(): array
     {
         return [
-            'missing' => [[], false],
+            'missing' => [[], true],
             'disabled' => [['enabled' => false], false],
             'enabled' => [['enabled' => true], true],
         ];

@@ -72,20 +72,20 @@ Redis 与 MySQL 固定共存，上层调用及 AMQP 消息格式不变。`AsyncE
 
 | 阶段 | 保存与清理 |
 | --- | --- |
-| 执行前 | 完整恢复记录只写 Redis，args 默认原文，显式开启后按收益压缩 |
+| 执行前 | 完整恢复记录只写 Redis，args 默认按策略压缩，可显式关闭 |
 | 执行成功 | 删除 Redis，不访问 MySQL 临时事件表 |
 | 执行失败 | 按原 ID 保存完整记录到 MySQL，确认提交后删除 Redis |
 | 中断、漏投或重启 | 超时扫描合并两端的待执行 ID，去重后由原执行器重试 |
 | Redis 超时记录重试 | 成功直接删 Redis，失败才转存 MySQL |
 | MySQL 记录重试 | 失败更新原记录与次数，成功删除，不搬回 Redis |
 
-Redis 与 MySQL 的生命周期固定，兼容读取始终开启。压缩写入由 `async_event.args_compression.enabled` 控制，缺失或为 `false` 时保留原文。配置如下：
+Redis 与 MySQL 的生命周期固定，兼容读取始终开启。压缩写入由 `async_event.args_compression.enabled` 控制，缺失时默认按策略压缩，为 `false` 时保留原文。配置如下：
 
 | 环境变量 | 默认值 | 用途 |
 | --- | --- | --- |
 | `ASYNC_EVENT_STORAGE_REDIS_POOL` | `default` | 已配置的 Hyperf Redis 连接池 |
 | `ASYNC_EVENT_STORAGE_REDIS_NAMESPACE` | `async_event` | 专用记录及索引命名空间，仅允许字母、数字、冒号、下划线和连字符 |
-| `ASYNC_EVENT_ARGS_COMPRESSION_ENABLED` | `false` | 是否压缩新写入的 args；设为 `true` 后按体积收益压缩，关闭不影响历史压缩数据读取 |
+| `ASYNC_EVENT_ARGS_COMPRESSION_ENABLED` | `true` | 是否按策略压缩新写入的 args；设为 `false` 后写原文，关闭不影响历史压缩数据读取 |
 | `ASYNC_EVENT_ARGS_MAX_DECODED_BYTES` | `16777216`（16 MiB） | 解压输出上限，可按正文大小与并发内存预算调整为正整数；更大的原文不压缩 |
 
 正常路径不双写；失败交接可以短暂两端同 ID 共存。先在 Redis 保存失败状态，再写 MySQL，最后删除 Redis；MySQL 写入失败保留 Redis 并抛错，Redis 清理失败则由后续读取或超时扫描恢复交接。MySQL 已有同 ID 记录时以数据库进度为准，不用 Redis 旧数据覆盖重试次数。批量转存使用原 ID 唯一键去重，冲突只自赋值 ID，不重置状态、时间或次数，不忽略其他写入错误。查询沿用应用默认数据库连接；外层事务未提交时保留 Redis 副本，后续独立扫描确认提交或在回滚后重建失败记录。成功清理双份记录时先删 Redis，再删 MySQL。
@@ -98,7 +98,7 @@ Redis 使用 Hash 保存完整记录、ZSET 保存重试与历史索引，Lua �
 
 ```php
 'args_compression' => [
-    'enabled' => (bool) env('ASYNC_EVENT_ARGS_COMPRESSION_ENABLED', false),
+    'enabled' => (bool) env('ASYNC_EVENT_ARGS_COMPRESSION_ENABLED', true),
     'strategy' => [
         'min_bytes' => 4096,
         'max_bytes' => 256 * 1024,
@@ -114,7 +114,7 @@ Redis 使用 Hash 保存完整记录、ZSET 保存重试与历史索引，Lua �
 
 缺少 gzencode/gzdecode 或不满足策略时保留原文；转存 MySQL 不重复压缩已编码字节。读取始终兼容旧原文与压缩存量，对外模型仍返回原始 args，新写入策略不限制历史大正文或旧压缩等级的读取。损坏或未知压缩格式转存为 MySQL 失败记录并保留，不执行正文；读取压缩记录时，额度不足或缺少 gzdecode 属于环境错误，会抛出异常并保留记录；原文读取不依赖这些函数。
 
-包发布配置与 magic-service 配置均支持上述环境变量；已发布过配置的应用需补充 `args_compression.enabled` 配置项，缺失时新写入默认不压缩。修改环境变量后需按应用部署方式重新加载配置并重启常驻进程。
+包发布配置与 magic-service 配置均支持上述环境变量；已发布过配置的应用需补充 `args_compression.enabled` 配置项才能通过环境变量控制，配置项缺失时默认按策略压缩，已有显式 `false` 配置仍保持关闭。修改环境变量后需按应用部署方式重新加载配置并重启常驻进程。
 
 接入与回滚：
 
