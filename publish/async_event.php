@@ -8,6 +8,19 @@ return [
     // 事件执行驱动配置 支持 coroutine、queue_amqp
     'listener_exec_driver' => env('ASYNC_EVENT_LISTENER_EXEC_DRIVER', 'coroutine'),
 
+    // 新事件固定暂存 Redis，失败转存 MySQL；这里只配置 Redis 连接与 key 隔离。
+    'storage' => [
+        'redis' => [
+            'pool' => env('ASYNC_EVENT_STORAGE_REDIS_POOL', 'default'),
+            'namespace' => env('ASYNC_EVENT_STORAGE_REDIS_NAMESPACE', 'async_event'),
+        ],
+    ],
+
+    // args 自动按体积收益压缩，仅保留解压内存额度配置；默认 16 MiB。
+    'args_compression' => [
+        'max_decoded_bytes' => (int) env('ASYNC_EVENT_ARGS_MAX_DECODED_BYTES', 16 * 1024 * 1024),
+    ],
+
     // 重试配置
     'retry' => [
         // 重试间隔 秒
