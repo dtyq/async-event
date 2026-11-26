@@ -18,7 +18,15 @@ class AsyncEventArgsCodec
 {
     private const ARGS_PREFIX = '@async-event-args:v1:';
 
-    private const COMPRESSION_THRESHOLD = 4096;
+    private const DEFAULT_STRATEGY = [
+        'min_bytes' => 4096,
+        'max_bytes' => 256 * 1024,
+        'min_savings_ratio' => 0.5,
+    ];
+
+    private const SAMPLE_BYTES = 4096;
+
+    private const SAMPLE_COUNT = 4;
 
     // 默认最多展开 16 MiB；更大的原文不压缩，部署可按内存预算调整额度。
     private const DEFAULT_MAX_DECODED_BYTES = 16 * 1024 * 1024;
@@ -35,7 +43,7 @@ class AsyncEventArgsCodec
     }
 
     /**
-     * 默认保留原文，显式开启且具备能力、最终存储体积更小时才压缩。
+     * 开启后先按体积及有限采样筛选，再按最终封装收益决定是否压缩。
      */
     public function encode(string $args): string
     {
@@ -45,17 +53,23 @@ class AsyncEventArgsCodec
         if (! function_exists('gzencode') || ! function_exists('gzdecode')) {
             return $args;
         }
-        $limit = $this->compressionLimit();
+        $strategy = $this->compressionStrategy();
         $length = strlen($args);
-        if ($length < self::COMPRESSION_THRESHOLD || $length > $limit) {
+        if ($length < $strategy['min_bytes'] || $length > $strategy['max_bytes'] || $length > $this->compressionLimit()) {
             return $args;
         }
-        $compressed = gzencode($args, 3);
-        if ($compressed === false) {
-            throw new RuntimeException('Failed to compress async event args');
+        $maxStoredRatio = 1 - $strategy['min_savings_ratio'];
+        // 大正文不参与采样；候选正文最多检查四个独立窗口，避免拼接放大重复收益。
+        if ($length > self::SAMPLE_BYTES * self::SAMPLE_COUNT) {
+            for ($i = 0; $i < self::SAMPLE_COUNT; ++$i) {
+                $offset = intdiv(($length - self::SAMPLE_BYTES) * $i, self::SAMPLE_COUNT - 1);
+                $sample = substr($args, $offset, self::SAMPLE_BYTES);
+                if ($this->compress($sample, $maxStoredRatio) === $sample) {
+                    return $args;
+                }
+            }
         }
-        $encoded = self::ARGS_PREFIX . $length . ':' . base64_encode($compressed);
-        return strlen($encoded) < $length ? $encoded : $args;
+        return $this->compress($args, $maxStoredRatio);
     }
 
     /**
@@ -98,5 +112,39 @@ class AsyncEventArgsCodec
             throw new RuntimeException('Configure a positive async event decoding capacity');
         }
         return $limit;
+    }
+
+    /**
+     * 补齐默认策略并校验边界，策略只限制新写入，不参与历史解码。
+     */
+    private function compressionStrategy(): array
+    {
+        $strategy = $this->config->get('async_event.args_compression.strategy', []);
+        if (! is_array($strategy)) {
+            throw new RuntimeException('Configure a valid async event compression strategy');
+        }
+        $strategy = array_merge(self::DEFAULT_STRATEGY, $strategy);
+        if (! is_int($strategy['min_bytes']) || $strategy['min_bytes'] <= 0
+            || ! is_int($strategy['max_bytes']) || $strategy['max_bytes'] < $strategy['min_bytes']
+            || $strategy['max_bytes'] > intdiv(PHP_INT_MAX, self::SAMPLE_COUNT)
+            || (! is_int($strategy['min_savings_ratio']) && ! is_float($strategy['min_savings_ratio']))
+            || ! ($strategy['min_savings_ratio'] > 0 && $strategy['min_savings_ratio'] < 1)) {
+            throw new RuntimeException('Configure valid async event compression bounds and savings ratio');
+        }
+        return $strategy;
+    }
+
+    /**
+     * 使用 Gzip 1 限制试压成本，收益计入版本头与 Base64，不达标保留原文。
+     */
+    private function compress(string $args, float $maxStoredRatio): string
+    {
+        $compressed = gzencode($args, 1);
+        if ($compressed === false) {
+            throw new RuntimeException('Failed to compress async event args');
+        }
+        $length = strlen($args);
+        $encoded = self::ARGS_PREFIX . $length . ':' . base64_encode($compressed);
+        return strlen($encoded) <= $length * $maxStoredRatio ? $encoded : $args;
     }
 }

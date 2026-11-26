@@ -19,6 +19,12 @@ return [
     // args 默认不压缩；开关只控制新写入，始终兼容读取历史压缩数据。
     'args_compression' => [
         'enabled' => (bool) env('ASYNC_EVENT_ARGS_COMPRESSION_ENABLED', false),
+        // 开启后按此策略筛选；固定 Gzip 1，最多采样四段各 4 KiB。
+        'strategy' => [
+            'min_bytes' => 4096,
+            'max_bytes' => 256 * 1024,
+            'min_savings_ratio' => 0.5,
+        ],
         'max_decoded_bytes' => (int) env('ASYNC_EVENT_ARGS_MAX_DECODED_BYTES', 16 * 1024 * 1024),
     ],
 
